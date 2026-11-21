@@ -21,6 +21,20 @@ std::map<std::string, std::unique_ptr<ModelAdapter>>& table() {
     return t;
 }
 
+/// Architecture aliases: a GGUF file may name its architecture differently from the adapter's canonical name.
+/// Keyed by the name the file reports, value is the canonical adapter name.
+const std::map<std::string, std::string>& aliases() {
+    static const std::map<std::string, std::string> a = {
+        {"dflash", "deepseek41"},
+    };
+    return a;
+}
+
+std::string resolve_arch(const std::string& arch) {
+    const auto it = aliases().find(arch);
+    return it != aliases().end() ? it->second : arch;
+}
+
 // BASALT_KNOWN_MODELS (every model Basalt ships) and BASALT_BUILT_MODELS (the ones this build holds) are comma lists
 // that cmake/models.cmake bakes in.
 std::vector<std::string> models_of(const std::string& csv) {
@@ -42,7 +56,7 @@ void register_adapter(std::unique_ptr<ModelAdapter> a) {
 }
 
 const ModelAdapter* find_adapter(const std::string& arch) {
-    const auto it = table().find(arch);
+    const auto it = table().find(resolve_arch(arch));
     return it == table().end() ? nullptr : it->second.get();
 }
 
@@ -59,14 +73,15 @@ std::vector<std::string> adapter_names() {
 }
 
 std::string unavailable_architecture(const std::string& arch) {
+    const std::string resolved = resolve_arch(arch);
     const std::vector<std::string> known = models_of(BASALT_KNOWN_MODELS);
     const std::vector<std::string> built = models_of(BASALT_BUILT_MODELS);
-    if (contains(known, arch) && !contains(built, arch)) {
+    if (contains(known, resolved) && !contains(built, resolved)) {
         // a Basalt model this build left out: what the build holds, and the option that adds this one
         std::string held, rebuild;
         for (const std::string& m : built) held += (held.empty() ? "" : ";") + m;
         for (const std::string& m : known)
-            if (m == arch || contains(built, m)) rebuild += (rebuild.empty() ? "" : ";") + m;
+            if (m == resolved || contains(built, m)) rebuild += (rebuild.empty() ? "" : ";") + m;
         return "architecture is '" + arch + "', a Basalt model this build left out (built with BASALT_MODELS=" + held +
                "); rebuild with cmake -DBASALT_MODELS=\"" + rebuild + "\" to load it";
     }

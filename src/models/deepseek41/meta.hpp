@@ -17,7 +17,8 @@ inline uint64_t key_u(const GgufFile& g, const char* suffix) {
 inline std::string validate_meta(const GgufFile& g) {
     const MetaValue* arch = g.get("general.architecture");
     if (!arch) return "missing general.architecture";
-    if (arch->s != "deepseek41") return "architecture is '" + arch->s + "', this adapter requires 'deepseek41'";
+    if (arch->s != "deepseek41" && arch->s != "dflash")
+        return "architecture is '" + arch->s + "', this adapter requires 'deepseek41'";
     for (const char* k : {"block_count", "embedding_length", "expert_count", "expert_used_count",
                           "expert_feed_forward_length"})
         if (key_u(g, k) == 0) return std::string("missing or zero deepseek41.") + k;

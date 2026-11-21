@@ -275,9 +275,15 @@ class Experts:
             layout lists exactly these, by layer id."""
         T = {n: w[1] for n, w in model.where.items()}
         exps = [n for n in T if n.startswith("blk.") and n.endswith("_exps.weight")]
-        if not exps:
-            raise ConvertError("the model has no expert tensors (blk.N.ffn_{gate,up,down}_exps.weight)")
         self.model = model
+        if not exps:
+            # dense model (e.g. qwen35): no routed experts, the section is empty
+            self.layers = []
+            self.n_layers = 0
+            self.n_expert = 0
+            self.layout = []
+            self.total = 0
+            return
         self.layers = list(layers) if layers is not None else list(range(1 + max(int(n.split(".")[1]) for n in exps)))
         if not self.layers:
             raise ConvertError("no layer holds routed experts")

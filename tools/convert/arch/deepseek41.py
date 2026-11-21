@@ -114,4 +114,4 @@ class DeepSeek41(Arch):
         }
 
 
-register(DeepSeek41())
+register(DeepSeek41(), "deepseek41", "dflash")

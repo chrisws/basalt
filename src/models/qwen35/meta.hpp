@@ -11,7 +11,7 @@
 
 namespace basalt::models::qwen35 {
 
-constexpr int kTypeF32 = 0, kTypeQ8_0 = 8, kTypeBf16 = 30, kTypeNvfp4 = 40, kTypeF8 = 44, kTypeNvfp4Planes = 45;
+constexpr int kTypeF32 = 0, kTypeF16 = 1, kTypeQ4K = 12, kTypeQ8_0 = 8, kTypeBf16 = 30, kTypeNvfp4 = 40, kTypeF8 = 44, kTypeNvfp4Planes = 45;
 
 /// Why `<base>.weight`, of tensor type `type` and rows x cols, is not a matrix the dense kernels read; empty when it is.
 inline std::string linear_type_error(const std::string& base, uint32_t type, int64_t rows, int64_t cols) {

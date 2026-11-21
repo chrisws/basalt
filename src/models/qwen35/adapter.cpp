@@ -2,6 +2,7 @@
 // pack into the shared dense stack and hands out its sessions.
 #include "models/qwen35/adapter.hpp"
 
+#include "basalt/artifact/dequant.hpp"
 #include "basalt/core/diag.hpp"
 #include "basalt/core/on_device.hpp"
 #include "basalt/core/loader.hpp"
@@ -201,19 +202,62 @@ private:
         dense::Weights w;
         const int H = g.n_embd;
         // the token embedding stays in page-locked host memory; the kernels read the rows they need
+        // accept BF16 (native) or F16 (common in quantized GGUFs where embeddings are kept at 16-bit float)
         const TensorInfo* te = need(gg, "token_embd.weight", kTypeBf16, (int64_t) H * g.n_vocab, err);
-        if (!te) return false;
-        if (cudaHostAlloc(&embd_, tensor_payload_bytes(*te), cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
-            err = "out of page-locked memory for the token embedding";
-            return false;
+        if (!te) {
+            err.clear();
+            te = need(gg, "token_embd.weight", kTypeF16, (int64_t) H * g.n_vocab, err);
         }
-        {   // read into the page-locked host memory with the rest
+        const TensorInfo* tq = nullptr;
+        const TensorInfo* tq8 = nullptr;
+        if (!te) {
+            err.clear();
+            tq = need(gg, "token_embd.weight", kTypeQ4K, (int64_t) H * g.n_vocab, err);
+        }
+        if (!te && !tq) {
+            err.clear();
+            tq8 = need(gg, "token_embd.weight", kTypeQ8_0, (int64_t) H * g.n_vocab, err);
+        }
+        if (!te && !tq && !tq8) return false;
+        if (te) {
+            // BF16 or F16: async copy via LoadItem
+            if (cudaHostAlloc(&embd_, tensor_payload_bytes(*te), cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
+                err = "out of page-locked memory for the token embedding";
+                return false;
+            }
             core::LoadItem it;
             it.file = plan_file_;
             it.off = gg.data_start() + te->offset;
             it.bytes = tensor_payload_bytes(*te);
             it.host = (uint8_t*) embd_;
-            plan_.add(it);   // (the token embedding is host memory: never the stage's)
+            plan_.add(it);
+        } else {
+            // Q4_K or Q8_0: dequantize to F16 in page-locked host memory (synchronous, from memory-mapped file)
+            const int64_t elems = (int64_t) H * g.n_vocab;
+            if (cudaHostAlloc(&embd_, (size_t) elems * 2, cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
+                err = "out of page-locked memory for the token embedding";
+                return false;
+            }
+            const TensorInfo& src = tq ? *tq : *tq8;
+            const uint8_t* raw = gg.tensor_data(src);
+            uint16_t* dst = (uint16_t*) embd_;
+            if (tq) {
+                // Q4_K: 256 values per 144-byte block
+                float buf[256];
+                const int64_t nblocks = elems / 256;
+                for (int64_t b = 0; b < nblocks; ++b) {
+                    dequantize_q4_K(raw + b * 144, buf);
+                    for (int i = 0; i < 256; ++i) dst[b * 256 + i] = fp32_to_fp16(buf[i]);
+                }
+            } else {
+                // Q8_0: 32 values per 34-byte block
+                float buf[32];
+                const int64_t nblocks = elems / 32;
+                for (int64_t b = 0; b < nblocks; ++b) {
+                    dequantize_q8_0(raw + b * 34, buf);
+                    for (int i = 0; i < 32; ++i) dst[b * 32 + i] = fp32_to_fp16(buf[i]);
+                }
+            }
         }
         void* dev_embd = nullptr;
         cudaHostGetDevicePointer(&dev_embd, embd_, 0);

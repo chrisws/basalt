@@ -61,6 +61,31 @@ inline float bf16_to_fp32(uint16_t h) {
     return out;
 }
 
+// ---- fp32 -> fp16. Handles subnormals, overflow-to-inf, and underflow-to-zero.
+inline uint16_t fp32_to_fp16(float f) {
+    uint32_t x;
+    std::memcpy(&x, &f, 4);
+    const uint16_t sign = (uint16_t)((x >> 16) & 0x8000u);
+    const uint32_t e32 = (x >> 23) & 0xFFu;
+    uint32_t man = x & 0x7FFFFFu;
+    if (e32 == 0xFF)
+        return (uint16_t)(sign | 0x7C00u | (man ? 0x200u : 0));
+    if (e32 == 0)
+        return sign;
+    int32_t e = (int32_t)e32 - 127 + 15;
+    if (e >= 31)
+        return (uint16_t)(sign | 0x7C00u);
+    if (e <= 0) {
+        if (e < -10) return sign;
+        man |= 0x800000u;
+        const int shift = 14 - e;
+        return (uint16_t)(sign | ((man + (1u << (shift - 1))) >> shift));
+    }
+    man += 0xFFFu;
+    if (man & 0x800000u) { man = 0; ++e; }
+    return (uint16_t)(sign | ((uint32_t)e << 10) | (man >> 13));
+}
+
 inline uint16_t read_u16(const uint8_t* p) {
     return (uint16_t)(p[0] | (p[1] << 8));
 }

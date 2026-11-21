@@ -83,7 +83,7 @@ basalt::kernels::QsaAttnPools pools_of(const basalt::kernels::KvHostPools& h, co
 // grow (every expert is streamed once per chunk, so a bigger chunk streams fewer bytes per token).  The sizes are
 // counted with the same `take` sequence `init` uses; a mismatch makes `init` fail with "do not fit", never overlap.
 // the conv input, which the recurrence reuses as its scratch
-uint64_t gdn_qkv_bytes(size_t T) { return std::max<uint64_t>((uint64_t) T * C * 4, gdn_work_bytes((int64_t) T)); }
+uint64_t gdn_qkv_bytes(size_t T) { return std::max<uint64_t>((uint64_t) T * C * 4, gdn_work_bytes((int64_t) T, HV)); }
 uint64_t gdn_set_bytes(size_t T) {
     Alloc a; a.count_only = true; bool ok = true;
     a.take<uint8_t>(gdn_qkv_bytes(T), ok); a.take<float>(T * ZV, ok); a.take<float>(T * 2 * HV, ok); a.take<float>(T * HV, ok);
