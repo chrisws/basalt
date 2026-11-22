@@ -90,9 +90,9 @@ void pretok_qwen35(const char* text, size_t size, std::vector<size_t>& ends) {
         // ' '?[^\s\p{L}\p{M}\p{N}]+[\r\n]*
         uint16_t flags2 = (cpt == ' ' ? flags_at(pos + 1) : flags);
         const uint16_t kNotPunct = kWhitespace | kLetter | kMark | kNumber;
-        if (!(flags2 & kNotPunct) && flags) {
+        if (!(flags2 & kNotPunct)) {
             pos += (cpt == ' ');
-            while (!(flags2 & kNotPunct) && flags2) flags2 = flags_at(++pos);
+            while (pos < n && !(flags_at(pos) & kNotPunct)) ++pos;
             uint32_t c2 = cpt_at(pos);
             while (c2 == '\r' || c2 == '\n') c2 = cpt_at(++pos);
             add(pos);
@@ -109,13 +109,6 @@ void pretok_qwen35(const char* text, size_t size, std::vector<size_t>& ends) {
         // \s*[\r\n]+
         if (last_end_rn > 0) {
             pos = last_end_rn;
-            add(pos);
-            continue;
-        }
-
-        // \s+(?!\S)
-        if (num_ws > 1 && cpt_at(pos + num_ws) != kOutOfRange) {
-            pos += num_ws - 1;
             add(pos);
             continue;
         }
