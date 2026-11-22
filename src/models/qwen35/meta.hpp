@@ -83,10 +83,13 @@ inline dense::Geometry geometry(const GgufFile& g, std::string& err) {
     o.gdn_conv = (int) key_u(g, "ssm.conv_kernel");
     o.gdn_gate = kernels::GdnGate::Silu;
     const int interval = (int) key_u(g, "full_attention_interval");
+    const int nextn = (int) key_u(g, "nextn_predict_layers");
+    const int main_layers = o.n_layers - nextn;
     const MetaValue* rec = key(g, "attention.recurrent_layers");
     for (int il = 0; il < o.n_layers; ++il) {
-        const bool recurrent = rec && rec->items.size() == (size_t) o.n_layers ? rec->items[(size_t) il].u != 0
-                                                                                : (il + 1) % interval != 0;
+        const bool recurrent = il < main_layers &&
+            (rec && rec->items.size() == (size_t) o.n_layers ? rec->items[(size_t) il].u != 0
+                                                             : (il + 1) % interval != 0);
         o.kinds.push_back(recurrent ? dense::Mixer::Gdn : dense::Mixer::Attention);
     }
     if (err.empty()) err = o.check();

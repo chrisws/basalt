@@ -259,6 +259,7 @@ private:
                 }
             }
         }
+        const size_t embd_bytes = te ? tensor_payload_bytes(*te) : (size_t) H * g.n_vocab * 2;
         void* dev_embd = nullptr;
         cudaHostGetDevicePointer(&dev_embd, embd_, 0);
         w.embd = (const uint16_t*) dev_embd;
@@ -319,12 +320,12 @@ private:
         size_t free_b = 0, total_b = 0;
         cudaMemGetInfo(&free_b, &total_b);
         basalt::log::info("basalt qwen35", "%zu tensors, %.2f GiB on the GPU, %.2f GiB of embedding in page-locked RAM; "
-                          "%.2f GiB free", n_tensors_, (double) dev_bytes_ / 1073741824.0, (double) tensor_payload_bytes(*te) / 1073741824.0,
+                          "%.2f GiB free", n_tensors_, (double) dev_bytes_ / 1073741824.0, (double) embd_bytes / 1073741824.0,
                           (double) free_b / 1073741824.0);
         if (split_at_ > 0)
             basalt::log::info("basalt qwen35", "layer split: %.2f GiB of layers %d-%d on CUDA%d", (double) peer_bytes_ / 1073741824.0, split_at_,
                               g.n_layers - 1, req.peer_devices.front());
-        o.host_embedding_bytes = tensor_payload_bytes(*te);
+        o.host_embedding_bytes = embd_bytes;
         o.gpu_weight_bytes = dev_bytes_ + peer_bytes_;
         o.layer_end = split_at_;
         if (o.vision) {
@@ -524,8 +525,12 @@ private:
             return nullptr;
         }
         const TensorInfo* t = &it->second;
-        if ((int) t->type != type || (int64_t) t->elements() != elems) {
-            err = "qwen35: " + name + " is not the expected type and size";
+        const bool bad_type = (int) t->type != type;
+        const bool bad_size = (int64_t) t->elements() != elems;
+        if (bad_type || bad_size) {
+            err = "qwen35: " + name + " is " + ggml_type_name(t->type) + " with " +
+                  std::to_string(t->elements()) + " elements; expected " +
+                  ggml_type_name((uint32_t) type) + " with " + std::to_string(elems) + " elements";
             return nullptr;
         }
         return t;
@@ -591,17 +596,48 @@ private:
 
     // two BF16 tensors in one buffer, the first then the second
     const uint16_t* bf16_pair(const GgufFile& gg, const std::string& a, const std::string& b, int64_t elems, std::string& err) {
-        const TensorInfo* ta = need(gg, a, kTypeBf16, elems, err);
-        const TensorInfo* tb = ta ? need(gg, b, kTypeBf16, elems, err) : nullptr;
+        auto find = [&](const std::string& name) -> const TensorInfo* {
+            auto it = tensors_.find(name);
+            if (it == tensors_.end()) {
+                err = "qwen35: the pack has no " + name;
+                return nullptr;
+            }
+            const TensorInfo* t = &it->second;
+            if ((int) t->type != kTypeBf16 && (int) t->type != kTypeQ8_0) {
+                err = "qwen35: " + name + " is " + ggml_type_name(t->type) + "; expected BF16 or Q8_0";
+                return nullptr;
+            }
+            if ((int64_t) t->elements() != elems) {
+                err = "qwen35: " + name + " has " + std::to_string(t->elements()) + " elements; expected " + std::to_string(elems);
+                return nullptr;
+            }
+            return t;
+        };
+        const TensorInfo* ta = find(a);
+        const TensorInfo* tb = ta ? find(b) : nullptr;
         if (!tb) return nullptr;
-        void* d = take(tensor_payload_bytes(*ta) + tensor_payload_bytes(*tb), a, err);
+        const uint64_t slot = (uint64_t) elems * 2;   // BF16 bytes per tensor
+        void* d = take(slot * 2, a, err);
         if (!d) return nullptr;
-        uint64_t at = 0;
-        for (const TensorInfo* t : {ta, tb}) {
-            queue(gg, *t, (char*) d + at);
-            at += tensor_payload_bytes(*t);
+        for (int i = 0; i < 2; ++i) {
+            const TensorInfo* t = (i == 0) ? ta : tb;
+            char* dst = (char*) d + i * slot;
+            if ((int) t->type == kTypeBf16) {
+                queue(gg, *t, dst);
+            } else {
+                // Q8_0: dequantize from the memory-mapped file, then copy to device
+                const uint8_t* raw = gg.tensor_data(*t);
+                std::vector<uint16_t> host(elems);
+                float buf[32];
+                const int64_t nblocks = elems / 32;
+                for (int64_t blk = 0; blk < nblocks; ++blk) {
+                    dequantize_q8_0(raw + blk * 34, buf);
+                    for (int j = 0; j < 32; ++j) host[blk * 32 + j] = fp32_to_fp16(buf[j]);
+                }
+                cudaMemcpy(dst, host.data(), slot, cudaMemcpyHostToDevice);
+            }
         }
-        dev_bytes_ += at;
+        dev_bytes_ += slot * 2;
         return (const uint16_t*) d;
     }
 

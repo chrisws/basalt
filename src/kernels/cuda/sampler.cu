@@ -1718,9 +1718,9 @@ void sample_tokens_impl(int split, const float* logits, int n_tokens, int n_voca
     if (n_tokens <= 0 || n_vocab <= 0) return;
     if (qprob == nullptr) n_query = 0;
     if (p.penalty_last_n > 0 && (history == nullptr || history_len <= 0)) {
-        basalt::log::error("basalt", "sample_tokens: penalty_last_n %d needs a history (got %p, len %d)",
-                     p.penalty_last_n, (const void*) history, history_len);
-        std::exit(1);
+        // No tokens generated yet (first step after prefill): skip penalties, nothing to penalize.
+        basalt::log::info("basalt", "sample_tokens: penalty_last_n %d with no history, skipping penalties",
+                     p.penalty_last_n);
     }
     const unsigned shmem = (history != nullptr && history_len > 0 && p.penalty_last_n > 0)
                                ? (unsigned) ((n_vocab + 31) / 32) * sizeof(unsigned)   // the penalty bitmap

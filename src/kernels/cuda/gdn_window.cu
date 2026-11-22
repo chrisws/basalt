@@ -521,7 +521,7 @@ static int mapped_heads(const DecRecArgs& a) {
     return a.nk * (a.h_v / a.h_k);
 }
 
-bool dec_gdn_rec_supported(int n_embd) { return n_embd == 2560 || n_embd == 5120; }
+bool dec_gdn_rec_supported(int n_embd) { return n_embd == 2560 || n_embd == 4096 || n_embd == 5120; }
 
 // the kernel for a block width: NJ = n_embd / 256
 template<template<int, int> class K, class L>
@@ -529,6 +529,9 @@ static void by_width(int n_embd, int max_t, L launch) {
     if (n_embd == 5120) {
         if (max_t <= 2) launch(K<2, 20>::f); else if (max_t <= 4) launch(K<4, 20>::f); else if (max_t <= 8) launch(K<8, 20>::f);
         else launch(K<16, 20>::f);
+    } else if (n_embd == 4096) {
+        if (max_t <= 2) launch(K<2, 16>::f); else if (max_t <= 4) launch(K<4, 16>::f); else if (max_t <= 8) launch(K<8, 16>::f);
+        else launch(K<16, 16>::f);
     } else {
         if (max_t <= 2) launch(K<2, 10>::f); else if (max_t <= 4) launch(K<4, 10>::f); else if (max_t <= 8) launch(K<8, 10>::f);
         else launch(K<16, 10>::f);
